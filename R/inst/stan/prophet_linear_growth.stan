@@ -38,3 +38,8 @@ model {
   // Likelihood
   y ~ normal((k + A * delta) .* t + (m + A * gamma) + X * beta, sigma_obs);
 }
+
+generated quantities {
+  vector[T] y_tilde;               // fitted y value
+  y_tilde = (k + A * delta) .* t + (m + A * gamma) + X * beta;
+}
