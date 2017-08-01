@@ -189,7 +189,7 @@ prophet <- function(df = NULL,
 #' @importFrom dplyr "%>%"
 #' @import Rcpp
 prophet_ht <- function(df = NULL,
-                    growth = 'linear',
+                    growth = 'ht_linear',
                     changepoints = NULL,
                     n.changepoints = 25,
                     yearly.seasonality = 'auto',
@@ -203,6 +203,8 @@ prophet_ht <- function(df = NULL,
                     interval.width = 0.80,
                     uncertainty.samples = 1000,
                     fit = TRUE,
+                    cauchy.scale = 3,
+                    lkj.scale = 4.5,
                     ...
 ) {
   # fb-block 1
@@ -241,9 +243,11 @@ prophet_ht <- function(df = NULL,
     stan.fit = NULL,
     params = list(),
     history = NULL,
-    history.dates = NULL
+    history.dates = NULL, 
+    cauchy.scale = cauchy.scale,
+    lkj.scale = lkj.scale
   )
-  validate_inputs(m)
+  #validate_inputs(m)
   class(m) <- append("prophet", class(m))
   if ((fit) && (!is.null(df))) {
     m <- fit_ht.prophet(m, df, ...)
@@ -334,6 +338,24 @@ compile_stan_model <- function(model) {
   model.name <- paste(model, 'growth', sep = '_')
   return(rstan::stan_model(stanc_ret = stanc, model_name = model.name))
 }
+
+#' Compile Stan model for hierachical timeseries
+#'
+#' @param model String 'ht_linear' or "ht_linear_cov' to specify a linear 
+#' model with or without considering covariance structure of growth trend  
+#'
+#' @return Stan model.
+#' 
+#' @note hard code the path, should change when making package
+compile_stan_model <- function(model) {
+  fn <- paste('~/prophet/R/inst/stan/prophet', model, 'growth.stan', sep = '_')
+  stan.src <- fn
+  stanc <- rstan::stanc(stan.src)
+  model.name <- paste(model, 'growth', sep = '_')
+  model <- rstan::stan_model(stanc_ret = stanc, model_name = model.name)
+  return(rstan::stan_model(stanc_ret = stanc, model_name = model.name))
+}
+
 
 #' Convert date vector
 #' 
@@ -928,22 +950,41 @@ fit_ht.prophet <- function(m, df, ...) {
   min_idx <- which.min(apply(m$history$y_scaled, 2, var))
   
   # Construct input to stan
-  dat <- list(
-    T = nrow(history$y_scaled),
-    N = ncol(history$y_scaled) - 1,
-    K = ncol(seasonal.features),
-    t = history$t,
-    y = history$y_scaled[-min_idx],
-    S = length(m$changepoints.t),
-    A = A,
-    t_change = array(m$changepoints.t),
-    X = as.matrix(seasonal.features),
-    sigma = m$seasonality.prior.scale,
-    tau = m$changepoint.prior.scale
-  )
+  if (m$growth == 'ht_linear') {
+    dat <- list(
+      T = nrow(history$y_scaled),
+      N = ncol(history$y_scaled) - 1,
+      K = ncol(seasonal.features),
+      t = history$t,
+      y = history$y_scaled[-min_idx],
+      S = length(m$changepoints.t),
+      A = A,
+      t_change = array(m$changepoints.t),
+      X = as.matrix(seasonal.features),
+      sigma = m$seasonality.prior.scale,
+      tau = m$changepoint.prior.scale
+    )
+  } else {
+    dat <- list(
+      T = nrow(history$y_scaled),
+      N = ncol(history$y_scaled) - 1,
+      K = ncol(seasonal.features),
+      t = history$t,
+      y = history$y_scaled[-min_idx],
+      S = length(m$changepoints.t),
+      A = A,
+      t_change = array(m$changepoints.t),
+      X = as.matrix(seasonal.features),
+      sigma = m$seasonality.prior.scale,
+      tau = m$changepoint.prior.scale, 
+      cauchy_scale = m$cauchy.scale,
+      lkj_scale = m$lkj.scale
+    )
+  }
+  
   
   # Run stan
-  if (m$growth == 'linear') {
+  if (m$growth == 'ht_linear' | m$growth == "ht_linear_cov") {
     kinit <- ht_linear_growth_init(history)
   } else {
     dat$cap <- history$cap_scaled  # Add capacities to the Stan data
@@ -1048,7 +1089,7 @@ predict.prophet <- function(object, df = NULL, ...) {
   df$trend <- predict_trend(object, df)
 
   df <- df %>%
-    dplyr::bind_cols(predict_uncertainty(object, df)) %>%
+    # dplyr::bind_cols(predict_uncertainty(object, df)) %>%
     dplyr::bind_cols(predict_seasonal_components(object, df))
   df$yhat <- df$trend + df$seasonal
   return(df)
@@ -1186,7 +1227,7 @@ predict_ht_trend <- function(model, df) {
   deltas <- apply(model$params$delta, 1, sum)
   
   t <- df$t
-  if (model$growth == 'linear') {
+  if (model$growth == 'ht_linear' | model$growth == "ht_linear_cov") {
     trend <- piecewise_linear(t, deltas, k, param.m, model$changepoints.t)
   } else {
     cap <- df$cap_scaled
