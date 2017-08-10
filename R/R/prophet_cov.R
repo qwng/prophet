@@ -90,11 +90,11 @@ prophet <- function(df = NULL,
                     ...
 ) {
   # fb-block 1
-
+  
   if (!is.null(changepoints)) {
     n.changepoints <- length(changepoints)
   }
-
+  
   m <- list(
     growth = growth,
     changepoints = changepoints,
@@ -124,7 +124,7 @@ prophet <- function(df = NULL,
   if ((fit) && (!is.null(df))) {
     m <- fit.prophet(m, df, ...)
   }
-
+  
   # fb-block 2
   return(m)
 }
@@ -189,23 +189,23 @@ prophet <- function(df = NULL,
 #' @importFrom dplyr "%>%"
 #' @import Rcpp
 prophet_ht <- function(df = NULL,
-                    growth = 'ht_linear',
-                    changepoints = NULL,
-                    n.changepoints = 25,
-                    yearly.seasonality = 'auto',
-                    weekly.seasonality = 'auto',
-                    daily.seasonality = 'auto',
-                    holidays = NULL,
-                    seasonality.prior.scale = 10,
-                    holidays.prior.scale = 10,
-                    changepoint.prior.scale = 0.05,
-                    mcmc.samples = 0,
-                    interval.width = 0.80,
-                    uncertainty.samples = 1000,
-                    fit = TRUE,
-                    cauchy.scale = 3,
-                    lkj.scale = 4.5,
-                    ...
+                       growth = 'linear',
+                       changepoints = NULL,
+                       n.changepoints = 25,
+                       yearly.seasonality = 'auto',
+                       weekly.seasonality = 'auto',
+                       daily.seasonality = 'auto',
+                       holidays = NULL,
+                       seasonality.prior.scale = 10,
+                       holidays.prior.scale = 10,
+                       changepoint.prior.scale = 0.05,
+                       mcmc.samples = 0,
+                       interval.width = 0.80,
+                       uncertainty.samples = 1000,
+                       fit = TRUE,
+                       cauchy.scale = 4.5,
+                       lkj.scale = 3,
+                       ...
 ) {
   # fb-block 1
   
@@ -232,6 +232,8 @@ prophet_ht <- function(df = NULL,
     seasonality.prior.scale = seasonality.prior.scale,
     changepoint.prior.scale = changepoint.prior.scale,
     holidays.prior.scale = holidays.prior.scale,
+    cauchy.scale = cauchy.scale,
+    lkj.scale = lkj.scale,
     mcmc.samples = mcmc.samples,
     interval.width = interval.width,
     uncertainty.samples = uncertainty.samples,
@@ -243,11 +245,9 @@ prophet_ht <- function(df = NULL,
     stan.fit = NULL,
     params = list(),
     history = NULL,
-    history.dates = NULL, 
-    cauchy.scale = cauchy.scale,
-    lkj.scale = lkj.scale
+    history.dates = NULL
   )
-  #validate_inputs(m)
+  validate_inputs(m)
   class(m) <- append("prophet", class(m))
   if ((fit) && (!is.null(df))) {
     m <- fit_ht.prophet(m, df, ...)
@@ -314,7 +314,7 @@ get_prophet_stan_model <- function(model) {
     load(binary)
     obj.name <- paste(model, 'growth.stanm', sep = '.')
     stanm <- eval(parse(text = obj.name))
-
+    
     ## Should cause an error if the model doesn't work.
     stanm@mk_cppmodule(stanm)
     stanm
@@ -331,31 +331,13 @@ get_prophet_stan_model <- function(model) {
 #' @return Stan model.
 compile_stan_model <- function(model) {
   fn <- paste('stan/prophet', model, 'growth.stan', sep = '_')
-
+  
   stan.src <- system.file(fn, package = 'prophet', mustWork = TRUE)
   stanc <- rstan::stanc(stan.src)
-
+  
   model.name <- paste(model, 'growth', sep = '_')
   return(rstan::stan_model(stanc_ret = stanc, model_name = model.name))
 }
-
-#' Compile Stan model for hierachical timeseries
-#'
-#' @param model String 'ht_linear' or "ht_linear_cov' to specify a linear 
-#' model with or without considering covariance structure of growth trend  
-#'
-#' @return Stan model.
-#' 
-#' @note hard code the path, should change when making package
-compile_stan_model_ht <- function(model) {
-  fn <- paste('~/prophet/R/inst/stan/prophet', model, 'growth.stan', sep = '_')
-  stan.src <- fn
-  stanc <- rstan::stanc(stan.src)
-  model.name <- paste(model, 'growth', sep = '_')
-  model <- rstan::stan_model(stanc_ret = stanc, model_name = model.name)
-  return(rstan::stan_model(stanc_ret = stanc, model_name = model.name))
-}
-
 
 #' Convert date vector
 #' 
@@ -409,7 +391,7 @@ time_diff <- function(ds1, ds2, units = "days") {
 #'
 #' @return list with items 'df' and 'm'.
 #'
-setup_dataframe_ht <- function(m, df, initialize_scales = FALSE) {
+setup_dataframe <- function(m, df, initialize_scales = FALSE) {
   # if (exists('y', where=df)) {
   #   df$y <- as.numeric(df$y)
   # }
@@ -418,68 +400,27 @@ setup_dataframe_ht <- function(m, df, initialize_scales = FALSE) {
     stop(paste('Unable to parse date format in column ds. Convert to date ',
                'format. Either %Y-%m-%d or %Y-%m-%d %H:%M:%S'))
   }
-
+  
   # df <- df %>%
   #   dplyr::arrange(ds)
-
+  
   if (initialize_scales) {
     m$y.scale <- max(abs(df$y))
     m$start <- min(df$ds)
     m$t.scale <- time_diff(max(df$ds), m$start, "secs")
   }
-
+  
   df$t <- time_diff(df$ds, m$start, "secs") / m$t.scale
   if (exists('y', where=df)) {
     df$y_scaled <- df$y / m$y.scale
   }
-
-  if (m$growth == 'logistic' | m$growth == "ht_logistic") {
+  
+  if (m$growth == 'logistic') {
     if (!(exists('cap', where=df))) {
       stop('Capacities must be supplied for logistic growth.')
     }
-    df$cap_scaled <- df$cap / m$y.scale
-  }
-  return(list("m" = m, "df" = df))
-}
-
-#' Prepare dataframe for fitting or predicting of hierarchical timeseries.
-#'
-#' Adds a time index and scales y. Creates auxillary columns 't', 't_ix',
-#' 'y_scaled', and 'cap_scaled'. These columns are used during both fitting
-#' and predicting.
-#'
-#' @param m Prophet object.
-#' @param df Data frame with columns ds, y, and cap if logistic growth.
-#' @param initialize_scales Boolean set scaling factors in m from df.
-#'
-#' @return list with items 'df' and 'm'.
-#'
-setup_dataframe_ht <- function(m, df, initialize_scales = FALSE) {
-  # if (exists('y', where=df)) {
-  #   df$y <- as.numeric(df$y)
-  # }
-  df$ds <- set_date(df$ds)
-  if (anyNA(df$ds)) {
-    stop(paste('Unable to parse date format in column ds. Convert to date ',
-               'format. Either %Y-%m-%d or %Y-%m-%d %H:%M:%S'))
-  }
-  
-  if (initialize_scales) {
-    m$y.scale <- apply(df$y, 2, function(x) max(abs(x)))
-    m$start <- min(df$ds)
-    m$t.scale <- time_diff(max(df$ds), m$start, "secs")
-  }
-  
-  df$t <- time_diff(df$ds, m$start, "secs") / m$t.scale
-  if (exists('y', where=df)) {
-    df$y_scaled <- t(t(df$y) / m$y.scale)
-  }
-  
-  if (m$growth == 'logistic' | m$growth == "ht_logistic") {
-    if (!(exists('cap', where=df))) {
-      stop('Capacities must be supplied for logistic growth.')
-    }
-    df$cap_scaled <- t(t(df$cap) / m$y.scale)
+    df <- df %>%
+      dplyr::mutate(cap_scaled = cap / m$y.scale)
   }
   return(list("m" = m, "df" = df))
 }
@@ -511,8 +452,8 @@ set_changepoints <- function(m) {
       # Place potential changepoints evenly through the first 80 pcnt of
       # the history.
       cp.indexes <- round(seq.int(1, floor(length(m$history$ds) * .8),
-                          length.out = (m$n.changepoints + 1))) %>%
-                    utils::tail(-1)
+                                  length.out = (m$n.changepoints + 1))) %>%
+        utils::tail(-1)
       m$changepoints <- m$history$ds[cp.indexes]
     } else {
       m$changepoints <- c()
@@ -587,7 +528,7 @@ make_holiday_features <- function(m, dates) {
   scale.ratio <- m$holidays.prior.scale / m$seasonality.prior.scale
   # Strip dates to be just days, for joining on holidays
   dates <- set_date(format(dates, "%Y-%m-%d"))
-
+  
   wide <- m$holidays %>%
     dplyr::mutate(ds = set_date(ds)) %>%
     dplyr::group_by(holiday, ds) %>%
@@ -605,11 +546,11 @@ make_holiday_features <- function(m, dates) {
     }) %>%
     dplyr::mutate(x = scale.ratio) %>%
     tidyr::spread(holiday, x, fill = 0)
-
+  
   holiday.mat <- data.frame(ds = dates) %>%
     dplyr::left_join(wide, by = 'ds') %>%
     dplyr::select(-ds)
-
+  
   holiday.mat[is.na(holiday.mat)] <- 0
   return(holiday.mat)
 }
@@ -713,22 +654,22 @@ set_auto_seasonalities <- function(m) {
   last <- max(m$history$ds)
   dt <- diff(time_diff(m$history$ds, m$start))
   min.dt <- min(dt[dt > 0])
-
+  
   yearly.disable <- time_diff(last, first) < 730
   fourier.order <- parse_seasonality_args(
     m, 'yearly', m$yearly.seasonality, yearly.disable, 10)
   if (fourier.order > 0) {
     m$seasonalities[['yearly']] <- c(365.25, fourier.order)
   }
-
+  
   weekly.disable <- ((time_diff(last, first) < 14) || (min.dt >= 7))
   fourier.order <- parse_seasonality_args(
     m, 'weekly', m$weekly.seasonality, weekly.disable, 3)
   if (fourier.order > 0) {
     m$seasonalities[['weekly']] <- c(7, fourier.order)
   }
-
-  daily.disable <- ((time_diff(last, first) < 2) || (min.dt >= 0.5))
+  
+  daily.disable <- ((time_diff(last, first) < 2) || (min.dt >= 1))
   fourier.order <- parse_seasonality_args(
     m, 'daily', m$daily.seasonality, daily.disable, 4)
   if (fourier.order > 0) {
@@ -822,38 +763,6 @@ ht_linear_growth_init <- function(df) {
   }
 }
 
-#' Initialize hierachical time series logistic growth.
-#'
-#' Provides a strong initialization for logistic growth by calculating the
-#' growth and offset parameters that pass the function through the first and
-#' last points in the time series.
-#'
-#' @param df Data frame with columns ds (date), cap_scaled (scaled capacity),
-#'  y_scaled (scaled time series), and t (scaled time).
-#'
-#' @return A vector (k, m) with the rate (k) and offset (m) of the logistic
-#'  growth function.
-#'
-ht_logistic_growth_init <- function(df) {
-  i0 <- which.min(df$ds)
-  i1 <- which.max(df$ds)
-  T <- df$t[i1] - df$t[i0]
-  # Force valid values, in case y > cap.
-  r0 <- sapply(df$cap_scaled[i0, ] / df$y_scaled[i0, ], function(x) max(x, 1.01))
-  r1 <- sapply(df$cap_scaled[i1, ] / df$y_scaled[i1, ], function(x) max(x, 1.01))
-  idx <- which(abs(r0 - r1) <= 0.01)
-  if (length(idx) > 0) {
-    r0[idx] <- 1.05 * r0[idx]
-  }
-  L0 <- log(r0 - 1)
-  L1 <- log(r1 - 1)
-  # Initialize the offset
-  m <- L0 * T / (L0 - L1)
-  # And the rate
-  k <- (L0 - L1) / T
-  return(list(k = k, m = m))
-}
-
 #' Fit the prophet model.
 #'
 #' This sets m$params to contain the fitted model parameters. It is a list
@@ -881,17 +790,17 @@ fit.prophet <- function(m, df, ...) {
     stop("Found infinity in column y.")
   }
   m$history.dates <- sort(set_date(df$ds))
-
+  
   out <- setup_dataframe(m, history, initialize_scales = TRUE)
   history <- out$df
   m <- out$m
   m$history <- history
   m <- set_auto_seasonalities(m)
   seasonal.features <- make_all_seasonality_features(m, history)
-
+  
   m <- set_changepoints(m)
   A <- get_changepoint_matrix(m)
-
+  
   # Construct input to stan
   dat <- list(
     T = nrow(history),
@@ -905,7 +814,7 @@ fit.prophet <- function(m, df, ...) {
     sigma = m$seasonality.prior.scale,
     tau = m$changepoint.prior.scale
   )
-
+  
   # Run stan
   if (m$growth == 'linear') {
     kinit <- linear_growth_init(history)
@@ -913,13 +822,13 @@ fit.prophet <- function(m, df, ...) {
     dat$cap <- history$cap_scaled  # Add capacities to the Stan data
     kinit <- logistic_growth_init(history)
   }
-
+  
   if (exists(".prophet.stan.models")) {
     model <- .prophet.stan.models[[m$growth]]
   } else {
     model <- get_prophet_stan_model(m$growth)
   }
-
+  
   stan_init <- function() {
     list(k = kinit[1],
          m = kinit[2],
@@ -928,7 +837,7 @@ fit.prophet <- function(m, df, ...) {
          sigma_obs = 1
     )
   }
-
+  
   if (m$mcmc.samples > 0) {
     stan.fit <- rstan::sampling(
       model,
@@ -951,7 +860,7 @@ fit.prophet <- function(m, df, ...) {
     m$params <- stan.fit$par
     n.iteration <- 1
   }
-
+  
   # Cast the parameters to have consistent form, whether full bayes or MAP
   for (name in c('delta', 'beta')){
     m$params[[name]] <- matrix(m$params[[name]], nrow = n.iteration)
@@ -1010,7 +919,7 @@ fit_ht.prophet <- function(m, df, ...) {
   
   m$history.dates <- sort(set_date(df$ds))
   
-  out <- setup_dataframe_ht(m, history, initialize_scales = TRUE)
+  out <- setup_dataframe(m, history, initialize_scales = TRUE)
   history <- out$df
   m <- out$m
   m$history <- history
@@ -1020,60 +929,55 @@ fit_ht.prophet <- function(m, df, ...) {
   m <- set_changepoints(m)
   A <- get_changepoint_matrix(m)
   
-  #min_idx <- which.min(apply(m$history$y_scaled, 2, var))
+  min_idx <- which.min(apply(m$history$y_scaled, 2, var))
   
   # Construct input to stan
-  if (m$growth == 'ht_linear' | m$growth == 'ht_logistic') {
-    dat <- list(
-      T = nrow(history$y_scaled),
-      N = ncol(history$y_scaled),
-      K = ncol(seasonal.features),
-      t = history$t,
-      y = history$y_scaled,
-      S = length(m$changepoints.t),
-      A = A,
-      t_change = array(m$changepoints.t),
-      X = as.matrix(seasonal.features),
-      sigma = m$seasonality.prior.scale,
-      tau = m$changepoint.prior.scale
-    )
-  } else {
-    dat <- list(
-      T = nrow(history$y_scaled),
-      N = ncol(history$y_scaled),
-      K = ncol(seasonal.features),
-      t = history$t,
-      y = history$y_scaled,
-      S = length(m$changepoints.t),
-      A = A,
-      t_change = array(m$changepoints.t),
-      X = as.matrix(seasonal.features),
-      sigma = m$seasonality.prior.scale,
-      tau = m$changepoint.prior.scale, 
-      cauchy_scale = m$cauchy.scale,
-      lkj_scale = m$lkj.scale
-    )
-  } 
+  dat <- list(
+    T = nrow(history$y_scaled),
+    N = ncol(history$y_scaled) - 1,
+    K = ncol(seasonal.features),
+    t = history$t,
+    y = history$y_scaled[-min_idx],
+    S = length(m$changepoints.t),
+    A = A,
+    t_change = array(m$changepoints.t),
+    X = as.matrix(seasonal.features),
+    sigma = m$seasonality.prior.scale,
+    tau = m$changepoint.prior.scale, 
+    cauchy_scale = m$cauchy.scale,
+    lkj_scale = m$lkj.scale
+  )
   
   # Run stan
-  if (m$growth == 'ht_linear' | m$growth == "ht_linear_cov") {
+  if (m$growth == 'linear') {
     kinit <- ht_linear_growth_init(history)
   } else {
     dat$cap <- history$cap_scaled  # Add capacities to the Stan data
-    kinit <- ht_logistic_growth_init(history)
+    kinit <- logistic_growth_init(history)
   }
   
-
-  model <- compile_stan_model_ht(m$growth)
+  # if (exists(".prophet.stan.models")) {
+  #   model <- .prophet.stan.models[["ht_linear_cov"]]
+  # } else {
+  #   model <- get_prophet_stan_model("ht_linear_cov")
+  # }
+  
+  # model <- get_prophet_stan_model("ht_linear_cov")
+  stan.src <- '~/prophet/R/inst/stan/prophet_ht_linear_cov_growth.stan'
+  stanc <- rstan::stanc(stan.src)
+  model.name <- "linear_ht"
+  model <- rstan::stan_model(stanc_ret = stanc, model_name = model.name)
+  
   
   stan_init <- function() {
     if (length(ncol(history$y)) > 0) {
-      return(list(k = kinit$k,
-                  m = kinit$m,
-                  delta = matrix(0, length(m$changepoints.t), ncol(df$y)),
-                  beta = matrix(0, ncol(seasonal.features), ncol(df$y)),
+      return(list(k = kinit$k[-min_idx],
+                  m = kinit$m[-min_idx],
+                  delta = matrix(0, length(m$changepoints.t), ncol(df$y) - 1),
+                  beta = matrix(0, ncol(seasonal.features), ncol(df$y) - 1),
                   sigma_obs = 1
       ))
+      
     } else {
       return(list(k = kinit[1],
                   m = kinit[2],
@@ -1082,6 +986,7 @@ fit_ht.prophet <- function(m, df, ...) {
                   sigma_obs = 1
       ))
     }
+    
   }
   
   
@@ -1124,7 +1029,6 @@ fit_ht.prophet <- function(m, df, ...) {
   }
   return(m)
 }
-
 #' Predict using the prophet model.
 #'
 #' @param object Prophet object.
@@ -1153,17 +1057,17 @@ predict.prophet <- function(object, df = NULL, ...) {
     out <- setup_dataframe(object, df)
     df <- out$df
   }
-
+  
   df$trend <- predict_trend(object, df)
-
+  
   df <- df %>%
-    # dplyr::bind_cols(predict_uncertainty(object, df)) %>%
+    dplyr::bind_cols(predict_uncertainty(object, df)) %>%
     dplyr::bind_cols(predict_seasonal_components(object, df))
   df$yhat <- df$trend + df$seasonal
   return(df)
 }
 
-#' Predict using the prophet model for hierarchical time series.
+#' Predict using the prophet model.
 #'
 #' @param object Prophet object.
 #' @param df Dataframe with dates for predictions (column ds), and capacity
@@ -1192,20 +1096,14 @@ predict_ht.prophet <- function(object, df = NULL, ...) {
     df <- out$df
   }
   
-  df$trend <- predict_trend_ht(object, df)
+  df$trend <- predict_ht_trend(object, df)
   
   # df <- df %>%
   #   dplyr::bind_cols(predict_uncertainty(object, df)) %>%
   #   dplyr::bind_cols(predict_ht_seasonal_components(object, df))
   
-  df$seasonal_components <- predict_seasonal_components_ht(object, df)
-  
-  df$yhat <- df$trend 
-  
-  for (i in 1:ncol(df$trend)) {
-   df$yhat[, i] <- df$trend[, i]  + df$seasonal_components[[i]]$seasonal
-  }
-
+  df <- df %>% cbind(predict_ht_seasonal_components(object, df))
+  df$yhat <- df$trend + df$seasonal
   return(df)
 }
 
@@ -1276,7 +1174,7 @@ predict_trend <- function(model, df) {
   k <- mean(model$params$k, na.rm = TRUE)
   param.m <- mean(model$params$m, na.rm = TRUE)
   deltas <- colMeans(model$params$delta, na.rm = TRUE)
-
+  
   t <- df$t
   if (model$growth == 'linear') {
     trend <- piecewise_linear(t, deltas, k, param.m, model$changepoints.t)
@@ -1295,26 +1193,20 @@ predict_trend <- function(model, df) {
 #'
 #' @return Vector with trend on prediction dates.
 #'
-predict_trend_ht <- function(model, df) {
-  t <- df$t
-  deltas <- model$params$delta
+predict_ht_trend <- function(model, df) {
+  k <- sum(model$params$k, na.rm = TRUE)
+  param.m <- sum(model$params$m, na.rm = TRUE)
+  deltas <- apply(model$params$delta, 1, sum)
   
-  if (model$growth == 'ht_linear' | model$growth == "ht_linear_cov") {
-    k <- sum(model$params$k, na.rm = TRUE)
-    param.m <- sum(model$params$m, na.rm = TRUE)
-   
+  t <- df$t
+  if (model$growth == 'linear') {
     trend <- piecewise_linear(t, deltas, k, param.m, model$changepoints.t)
   } else {
-    k <- model$params$k
-    param.m <- model$params$m
-    trend <- NULL
     cap <- df$cap_scaled
-    for (i in 1:ncol(df$cap_scaled)) {
-     trend <- cbind(trend, piecewise_logistic(
-        t, cap[i], deltas[, i], k[i], param.m[i], model$changepoints.t))
-    }
+    trend <- piecewise_logistic(
+      t, cap, deltas, k, param.m, model$changepoints.t)
   }
-  return(t(t(trend) * model$y.scale))
+  return(trend * model$y.scale)
 }
 
 #' Predict seasonality broken down into components.
@@ -1328,14 +1220,14 @@ predict_seasonal_components <- function(m, df) {
   seasonal.features <- make_all_seasonality_features(m, df)
   lower.p <- (1 - m$interval.width)/2
   upper.p <- (1 + m$interval.width)/2
-
+  
   # Broken down into components
   components <- dplyr::data_frame(component = colnames(seasonal.features)) %>%
     dplyr::mutate(col = 1:n()) %>%
     tidyr::separate(component, c('component', 'part'), sep = "_delim_",
                     extra = "merge", fill = "right") %>%
     dplyr::filter(component != 'zeros')
-
+  
   if (nrow(components) > 0) {
     component.predictions <- components %>%
       dplyr::group_by(component) %>% dplyr::do({
@@ -1353,7 +1245,7 @@ predict_seasonal_components <- function(m, df) {
       tidyr::unite(component, component, stat, sep="") %>%
       tidyr::spread(component, value) %>%
       dplyr::select(-ix)
-
+    
     component.predictions$seasonal <- rowSums(
       component.predictions[unique(components$component)])
   } else {
@@ -1369,7 +1261,7 @@ predict_seasonal_components <- function(m, df) {
 #'
 #' @return Dataframe with seasonal components.
 #'
-predict_seasonal_components_ht <- function(m, df) {
+predict_ht_seasonal_components <- function(m, df) {
   seasonal.features <- make_all_seasonality_features(m, df)
   lower.p <- (1 - m$interval.width)/2
   upper.p <- (1 + m$interval.width)/2
@@ -1382,32 +1274,24 @@ predict_seasonal_components_ht <- function(m, df) {
     dplyr::filter(component != 'zeros')
   
   if (nrow(components) > 0) {
-    component.predictions <- list()
-    for (i in 1:ncol(df$y)) {
-      component.predictions[[i]] <- components %>%
-        dplyr::group_by(component) %>% dplyr::do({
-          comp <- (as.matrix(seasonal.features[, .$col])
-                   %*% m$params$beta[.$col, i]) * m$y.scale[i]
-          dplyr::data_frame(ix = 1:nrow(seasonal.features),
-                            mean = rowMeans(comp, na.rm = TRUE),
-                            lower = apply(comp, 1, stats::quantile, lower.p,
-                                          na.rm = TRUE),
-                            upper = apply(comp, 1, stats::quantile, upper.p,
-                                          na.rm = TRUE))
-        }) %>%
-        tidyr::gather(stat, value, mean, lower, upper) %>%
-        dplyr::mutate(stat = ifelse(stat == 'mean', '', paste0('_', stat))) %>%
-        tidyr::unite(component, component, stat, sep="") %>%
-        tidyr::spread(component, value) %>%
-        dplyr::select(-ix)
-    }
-    names(component.predictions) <- colnames(df$y)
+    component.predictions <- components %>%
+      dplyr::group_by(component) %>% dplyr::do({
+        comp <- rowSums(as.matrix(seasonal.features[, .$col])
+                        %*% m$params$beta[.$col, ] * m$y.scale)
+        dplyr::data_frame(ix = 1:nrow(seasonal.features),
+                          mean = comp,
+                          lower = comp, 
+                          upper = comp)
+      }) %>%
+      tidyr::gather(stat, value, mean, lower, upper) %>%
+      dplyr::mutate(stat = ifelse(stat == 'mean', '', paste0('_', stat))) %>%
+      tidyr::unite(component, component, stat, sep="") %>%
+      tidyr::spread(component, value) %>%
+      dplyr::select(-ix)
     
-    for (i in 1:ncol(df$y)) {
-      component.predictions[[i]]$seasonal <- rowSums(
-        component.predictions[[i]][unique(components$component)])
-      }
-    } else {
+    component.predictions$seasonal <- rowSums(
+      component.predictions[unique(components$component)])
+  } else {
     component.predictions <- data.frame(seasonal = rep(0, nrow(df)))
   }
   return(component.predictions)
@@ -1425,12 +1309,12 @@ sample_posterior_predictive <- function(m, df) {
   n.iterations <- length(m$params$k)
   samp.per.iter <- max(1, ceiling(m$uncertainty.samples / n.iterations))
   nsamp <- n.iterations * samp.per.iter  # The actual number of samples
-
+  
   seasonal.features <- make_all_seasonality_features(m, df)
   sim.values <- list("trend" = matrix(, nrow = nrow(df), ncol = nsamp),
                      "seasonal" = matrix(, nrow = nrow(df), ncol = nsamp),
                      "yhat" = matrix(, nrow = nrow(df), ncol = nsamp))
-
+  
   for (i in 1:n.iterations) {
     # For each set of parameters from MCMC (or just 1 set for MAP),
     for (j in 1:samp.per.iter) {
@@ -1456,9 +1340,9 @@ sample_posterior_predictive <- function(m, df) {
 #'
 #' @export
 predictive_samples <- function(m, df) {
-    df <- setup_dataframe(m, df)$df
-    sim.values <- sample_posterior_predictive(m, df)
-    return(sim.values)
+  df <- setup_dataframe(m, df)$df
+  sim.values <- sample_posterior_predictive(m, df)
+  return(sim.values)
 }
 
 #' Prophet uncertainty intervals.
@@ -1473,7 +1357,7 @@ predict_uncertainty <- function(m, df) {
   # Add uncertainty estimates
   lower.p <- (1 - m$interval.width)/2
   upper.p <- (1 + m$interval.width)/2
-
+  
   intervals <- cbind(
     t(apply(t(sim.values$yhat), 2, stats::quantile, c(lower.p, upper.p),
             na.rm = TRUE)),
@@ -1482,7 +1366,7 @@ predict_uncertainty <- function(m, df) {
     t(apply(t(sim.values$seasonal), 2, stats::quantile, c(lower.p, upper.p),
             na.rm = TRUE))
   ) %>% dplyr::as_data_frame()
-
+  
   colnames(intervals) <- paste(rep(c('yhat', 'trend', 'seasonal'), each=2),
                                c('lower', 'upper'), sep = "_")
   return(intervals)
@@ -1499,13 +1383,13 @@ predict_uncertainty <- function(m, df) {
 #'
 sample_model <- function(m, df, seasonal.features, iteration) {
   trend <- sample_predictive_trend(m, df, iteration)
-
+  
   beta <- m$params$beta[iteration,]
   seasonal <- (as.matrix(seasonal.features) %*% beta) * m$y.scale
-
+  
   sigma <- m$params$sigma_obs[iteration]
   noise <- stats::rnorm(nrow(df), mean = 0, sd = sigma) * m$y.scale
-
+  
   return(list("yhat" = trend + seasonal + noise,
               "trend" = trend,
               "seasonal" = seasonal))
@@ -1523,10 +1407,10 @@ sample_predictive_trend <- function(model, df, iteration) {
   k <- model$params$k[iteration]
   param.m <- model$params$m[iteration]
   deltas <- model$params$delta[iteration,]
-
+  
   t <- df$t
   T <- max(t)
-
+  
   if (T > 1) {
     # Get the time discretization of the history
     dt <- diff(model$history$t)
@@ -1541,7 +1425,7 @@ sample_predictive_trend <- function(model, df, iteration) {
     prob.change <- min(1, (S * (T - 1)) / N)
     # This calculation works for both history and df not uniformly spaced.
     n.changes <- stats::rbinom(1, N, prob.change)
-
+    
     # Sample ts
     if (n.changes == 0) {
       changepoint.ts.new <- c()
@@ -1552,16 +1436,16 @@ sample_predictive_trend <- function(model, df, iteration) {
     changepoint.ts.new <- c()
     n.changes <- 0
   }
-
+  
   # Get the empirical scale of the deltas, plus epsilon to avoid NaNs.
   lambda <- mean(abs(c(deltas))) + 1e-8
   # Sample deltas
   deltas.new <- extraDistr::rlaplace(n.changes, mu = 0, sigma = lambda)
-
+  
   # Combine with changepoints from the history
   changepoint.ts <- c(model$changepoints.t, changepoint.ts.new)
   deltas <- c(deltas, deltas.new)
-
+  
   # Get the corresponding trend
   if (model$growth == 'linear') {
     trend <- piecewise_linear(t, deltas, k, param.m, changepoint.ts)
@@ -1686,8 +1570,8 @@ plot.prophet <- function(x, fcst, uncertainty = TRUE, plot_cap = TRUE,
 #' @export
 #' @importFrom dplyr "%>%"
 prophet_plot_components <- function(
-    m, fcst, uncertainty = TRUE, plot_cap = TRUE, weekly_start = 0,
-    yearly_start = 0) {
+  m, fcst, uncertainty = TRUE, plot_cap = TRUE, weekly_start = 0,
+  yearly_start = 0) {
   df <- df_for_plotting(m, fcst)
   # Plot the trend
   panels <- list(plot_trend(df, uncertainty, plot_cap))
@@ -1710,7 +1594,7 @@ prophet_plot_components <- function(
       panels[[length(panels) + 1]] <- plot_seasonality(m, name, uncertainty)
     }
   }
-
+  
   # Make the plot.
   grid::grid.newpage()
   grid::pushViewport(grid::viewport(layout = grid::grid.layout(length(panels),
@@ -1772,11 +1656,11 @@ plot_holidays <- function(m, df, uncertainty = TRUE) {
     ggplot2::geom_line(color = "#0072B2", na.rm = TRUE)
   if (uncertainty) {
     gg.holidays <- gg.holidays +
-    ggplot2::geom_ribbon(ggplot2::aes(ymin = holidays_lower,
-                                      ymax = holidays_upper),
-                         alpha = 0.2,
-                         fill = "#0072B2",
-                         na.rm = TRUE)
+      ggplot2::geom_ribbon(ggplot2::aes(ymin = holidays_lower,
+                                        ymax = holidays_upper),
+                           alpha = 0.2,
+                           fill = "#0072B2",
+                           na.rm = TRUE)
   }
   return(gg.holidays)
 }
@@ -1794,22 +1678,22 @@ plot_weekly <- function(m, uncertainty = TRUE, weekly_start = 0) {
   # Compute weekly seasonality for a Sun-Sat sequence of dates.
   df.w <- data.frame(
     ds=seq(set_date('2017-01-01'), by='d', length.out=7) +
-    weekly_start, cap=1.)
+      weekly_start, cap=1.)
   df.w <- setup_dataframe(m, df.w)$df
   seas <- predict_seasonal_components(m, df.w)
   seas$dow <- factor(weekdays(df.w$ds), levels=weekdays(df.w$ds))
-
+  
   gg.weekly <- ggplot2::ggplot(seas, ggplot2::aes(x = dow, y = weekly,
                                                   group = 1)) +
     ggplot2::geom_line(color = "#0072B2", na.rm = TRUE) +
     ggplot2::labs(x = "Day of week")
   if (uncertainty) {
     gg.weekly <- gg.weekly +
-    ggplot2::geom_ribbon(ggplot2::aes(ymin = weekly_lower,
-                                      ymax = weekly_upper),
-                         alpha = 0.2,
-                         fill = "#0072B2",
-                         na.rm = TRUE)
+      ggplot2::geom_ribbon(ggplot2::aes(ymin = weekly_lower,
+                                        ymax = weekly_upper),
+                           alpha = 0.2,
+                           fill = "#0072B2",
+                           na.rm = TRUE)
   }
   return(gg.weekly)
 }
@@ -1827,11 +1711,11 @@ plot_yearly <- function(m, uncertainty = TRUE, yearly_start = 0) {
   # Compute yearly seasonality for a Jan 1 - Dec 31 sequence of dates.
   df.y <- data.frame(
     ds=seq(set_date('2017-01-01'), by='d', length.out=365) +
-    yearly_start, cap=1.)
+      yearly_start, cap=1.)
   df.y <- setup_dataframe(m, df.y)$df
   seas <- predict_seasonal_components(m, df.y)
   seas$ds <- df.y$ds
-
+  
   gg.yearly <- ggplot2::ggplot(seas, ggplot2::aes(x = ds, y = yearly,
                                                   group = 1)) +
     ggplot2::geom_line(color = "#0072B2", na.rm = TRUE) +
@@ -1839,11 +1723,11 @@ plot_yearly <- function(m, uncertainty = TRUE, yearly_start = 0) {
     ggplot2::scale_x_datetime(labels = scales::date_format('%B %d'))
   if (uncertainty) {
     gg.yearly <- gg.yearly +
-    ggplot2::geom_ribbon(ggplot2::aes(ymin = yearly_lower,
-                                      ymax = yearly_upper),
-                         alpha = 0.2,
-                         fill = "#0072B2",
-                         na.rm = TRUE)
+      ggplot2::geom_ribbon(ggplot2::aes(ymin = yearly_lower,
+                                        ymax = yearly_upper),
+                           alpha = 0.2,
+                           fill = "#0072B2",
+                           na.rm = TRUE)
   }
   return(gg.yearly)
 }
@@ -1867,7 +1751,7 @@ plot_seasonality <- function(m, name, uncertainty = TRUE) {
   seas <- predict_seasonal_components(m, df.y)
   seas$ds <- df.y$ds
   gg.s <- ggplot2::ggplot(
-      seas, ggplot2::aes_string(x = 'ds', y = name, group = 1)) +
+    seas, ggplot2::aes_string(x = 'ds', y = name, group = 1)) +
     ggplot2::geom_line(color = "#0072B2", na.rm = TRUE)
   if (period <= 2) {
     fmt.str <- '%T'
@@ -1881,13 +1765,13 @@ plot_seasonality <- function(m, name, uncertainty = TRUE) {
     ggplot2::scale_x_datetime(labels = scales::date_format(fmt.str))
   if (uncertainty) {
     gg.s <- gg.s +
-    ggplot2::geom_ribbon(
-      ggplot2::aes_string(
-        ymin = paste0(name, '_lower'), ymax = paste0(name, '_upper')
-      ),
-      alpha = 0.2,
-      fill = "#0072B2",
-      na.rm = TRUE)
+      ggplot2::geom_ribbon(
+        ggplot2::aes_string(
+          ymin = paste0(name, '_lower'), ymax = paste0(name, '_upper')
+        ),
+        alpha = 0.2,
+        fill = "#0072B2",
+        na.rm = TRUE)
   }
   return(gg.s)
 }
