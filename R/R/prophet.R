@@ -409,7 +409,7 @@ time_diff <- function(ds1, ds2, units = "days") {
 #'
 #' @return list with items 'df' and 'm'.
 #'
-setup_dataframe_ht <- function(m, df, initialize_scales = FALSE) {
+setup_dataframe <- function(m, df, initialize_scales = FALSE) {
   # if (exists('y', where=df)) {
   #   df$y <- as.numeric(df$y)
   # }
@@ -433,7 +433,7 @@ setup_dataframe_ht <- function(m, df, initialize_scales = FALSE) {
     df$y_scaled <- df$y / m$y.scale
   }
 
-  if (m$growth == 'logistic' | m$growth == "ht_logistic") {
+  if (m$growth == 'logistic' | m$growth == "ht_logistic" | m$growth == "ht_logistic_cov") {
     if (!(exists('cap', where=df))) {
       stop('Capacities must be supplied for logistic growth.')
     }
@@ -475,7 +475,7 @@ setup_dataframe_ht <- function(m, df, initialize_scales = FALSE) {
     df$y_scaled <- t(t(df$y) / m$y.scale)
   }
   
-  if (m$growth == 'logistic' | m$growth == "ht_logistic") {
+  if (m$growth == 'logistic' | m$growth == "ht_logistic" | m$growth == "ht_logistic_cov") {
     if (!(exists('cap', where=df))) {
       stop('Capacities must be supplied for logistic growth.')
     }
@@ -1300,16 +1300,19 @@ predict_trend_ht <- function(model, df) {
   deltas <- model$params$delta
   
   if (model$growth == 'ht_linear' | model$growth == "ht_linear_cov") {
-    k <- sum(model$params$k, na.rm = TRUE)
-    param.m <- sum(model$params$m, na.rm = TRUE)
-   
-    trend <- piecewise_linear(t, deltas, k, param.m, model$changepoints.t)
+    k <- model$params$k
+    param.m <- model$params$m
+    trend <- NULL
+    for (i in 1:ncol(df$y_scaled)) {
+      trend <- cbind(trend, piecewise_linear(
+        t, deltas[, i], k[i], param.m[i], model$changepoints.t))
+    }
   } else {
     k <- model$params$k
     param.m <- model$params$m
     trend <- NULL
     cap <- df$cap_scaled
-    for (i in 1:ncol(df$cap_scaled)) {
+    for (i in 1:ncol(df$y_scaled)) {
      trend <- cbind(trend, piecewise_logistic(
         t, cap[i], deltas[, i], k[i], param.m[i], model$changepoints.t))
     }

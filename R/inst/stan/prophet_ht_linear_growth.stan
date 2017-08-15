@@ -3,8 +3,8 @@ data {
   int N;                                // Number of Time-series
   int<lower=1> K;                       // Number of seasonal vectors
   vector[T] t;                            // Day
-  matrix[T, N] y;                            // Time-series
-  int S;                                // Number of changepoints
+  matrix[T, N] y;                            // Time-series int S; 
+  int S;                              // Number of changepoints
   matrix[T, S] A;                   // Split indicators
   real t_change[S];                 // Index of changepoints
   matrix[T,K] X;                     // season vectors
@@ -22,15 +22,11 @@ parameters {
 
 transformed parameters {
   matrix[S, N] gamma;                  // adjusted offsets, for piecewise continuity
-  vector[N] ones;                   // vector consist of 1, for adding delta together
 
   for (i in 1:S) {
     gamma[i, ] = -t_change[i] * delta[i, ];
   }
-  
-  for (i in 1:N) {
-    ones[i] = 1;
-  }
+
 }
 
 model {
@@ -44,12 +40,10 @@ model {
   // Likelihood
   {
     matrix[T, N] mu_y;                  // mean value for y
-    mu_y[, 1] = (sum(k) + A * delta * ones) .* t + (sum(m) + A * gamma * ones) + X * beta * ones;
-    for (n in 1:(N-1)) {
-      mu_y[, (n+1)] = (k[n] + A * delta[,n]) .* t + (m[n] + A * gamma[,n]) + X * beta[,n];
+    for (n in 1:N) {
+      mu_y[, n] = (k[n] + A * delta[,n]) .* t + (m[n] + A * gamma[,n]) + X * beta[,n];
     }
-    y[, 1] ~ normal(mu_y[, 1], N * sigma_obs);
-    to_vector(y[, 2:(N-1)]) ~ normal(to_vector(mu_y[, 2:(N-1)]), sigma_obs);
+    to_vector(y) ~ normal(to_vector(mu_y), sigma_obs);
   }
 }
 
