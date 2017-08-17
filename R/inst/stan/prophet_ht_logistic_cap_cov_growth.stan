@@ -3,7 +3,6 @@ data {
   int N;                                // Number of Time-series
   int<lower=1> K;                       // Number of seasonal vectors
   vector[T] t;                            // Day
-  matrix[T, N] cap;                          // Capacities
   matrix[T, N] y;                            // Time-series
   int S;                                // Number of changepoints
   matrix[T, S] A;                   // Split indicators
@@ -13,10 +12,14 @@ data {
   real<lower=0> tau;                  // scale on changepoints prior
   real<lower=0> cauchy_scale;          //scale on Cauchy prior of Tau
   real<lower=0> lkj_scale;            // scale on lkj
+  real kappa_int;                     // mean for capacities intercept
+  real kappa_slope;                   // mean for capacities slope
 }
 
 parameters {
   vector[N] m;                            // offset
+  vector[N] cap_int;                          // Capacities intercept
+  vector[N] cap_slope;                       // Capacities slope
   matrix[S, N] delta;                       // Rate adjustments
   real<lower=0> sigma_obs;               // Observation noise (incl. seasonal variation)
   matrix[K, N] beta;                    // seasonal vector
@@ -30,7 +33,7 @@ transformed parameters {
   row_vector[N] k_s[S + 1];            // actual rate in each segment
   vector[N] m_pr;
   vector<lower=0>[N] Tau;               // prior scale for k
-  vector[N] k;                          // Base growth rate
+  vector[N] k; 
   
   for (n in 1:N) Tau[n] = cauchy_scale * tan(tau_unif[n]);
   
@@ -56,12 +59,14 @@ model {
   to_vector(delta) ~ double_exponential(0, tau);
   sigma_obs ~ normal(0, 0.1);
   to_vector(beta) ~ normal(0, sigma);
+  to_vector(cap_int) ~ normal(kappa_int, 5);
+  to_vector(cap_slope) ~ normal(cap_slope, 5);
   
   // Likelihood
   {
     matrix[T, N] mu_y;               
     for (n in 1:N) {
-      mu_y[, n] = cap[, n] ./ (1 + exp(-(k[n] + A * delta[,n]) .* (t - (m[n] + A * gamma[,n])))) + X * beta[,n];
+      mu_y[, n] = (cap_int[n] + cap_slope[n] * t) ./ (1 + exp(-(k[n] + A * delta[,n]) .* (t - (m[n] + A * gamma[,n])))) + X * beta[,n];
     }
     to_vector(y) ~ normal(to_vector(mu_y), sigma_obs);
   }

@@ -352,7 +352,6 @@ compile_stan_model_ht <- function(model) {
   stan.src <- fn
   stanc <- rstan::stanc(stan.src)
   model.name <- paste(model, 'growth', sep = '_')
-  model <- rstan::stan_model(stanc_ret = stanc, model_name = model.name)
   return(rstan::stan_model(stanc_ret = stanc, model_name = model.name))
 }
 
@@ -854,6 +853,43 @@ ht_logistic_growth_init <- function(df) {
   return(list(k = k, m = m))
 }
 
+#' Initialize hierachical time series logistic growth with cap.
+#'
+#' Provides a strong initialization for logistic growth by calculating the
+#' growth and offset parameters that pass the function through the first and
+#' last points in the time series.
+#'
+#' @param df Data frame with columns ds (date), cap_scaled (scaled capacity),
+#'  y_scaled (scaled time series), and t (scaled time).
+#'
+#' @return A vector (k, m) with the rate (k) and offset (m) of the logistic
+#'  growth function.
+#'
+ht_logistic_cap_growth_init <- function(df) {
+  i0 <- which.min(df$ds)
+  i1 <- which.max(df$ds)
+  T <- df$t[i1] - df$t[i0]
+  cap_int <- df$y_scaled[i0, ] * 1.1
+  cap_slope <- apply(df$y_scaled, 2, function(x) {
+    idx <- which.max(x)
+    return((max(x) - x[i0]) / (df$t[idx] - df$t[i0]))
+  })
+  # Force valid values, in case y > cap.
+  r0 <- sapply(cap_int / df$y_scaled[i0, ], function(x) max(x, 1.01))
+  r1 <- sapply((cap_int + cap_slope * T) / df$y_scaled[i1, ], function(x) max(x, 1.01))
+  idx <- which(abs(r0 - r1) <= 0.01)
+  if (length(idx) > 0) {
+    r0[idx] <- 1.05 * r0[idx]
+  }
+  L0 <- log(r0 - 1)
+  L1 <- log(r1 - 1)
+  # Initialize the offset
+  m <- L0 * T / (L0 - L1)
+  # And the rate
+  k <- (L0 - L1) / T
+  return(list(k = k, m = m, cap_int = cap_int, cap_slope = cap_slope))
+}
+
 #' Fit the prophet model.
 #'
 #' This sets m$params to contain the fitted model parameters. It is a list
@@ -1023,7 +1059,8 @@ fit_ht.prophet <- function(m, df, ...) {
   #min_idx <- which.min(apply(m$history$y_scaled, 2, var))
   
   # Construct input to stan
-  if (m$growth == 'ht_linear' | m$growth == 'ht_logistic') {
+  if (m$growth == 'ht_linear' | m$growth == 'ht_logistic' | 
+      m$growth == 'ht_logistic_cap') {
     dat <- list(
       T = nrow(history$y_scaled),
       N = ncol(history$y_scaled),
@@ -1058,22 +1095,37 @@ fit_ht.prophet <- function(m, df, ...) {
   # Run stan
   if (m$growth == 'ht_linear' | m$growth == "ht_linear_cov") {
     kinit <- ht_linear_growth_init(history)
+  } else if (m$growth == "ht_logistic_cap" | m$growth == "ht_logistic_cap_cov") {
+    kinit <- ht_logistic_cap_growth_init(history)
+    dat$kappa_int <- mean(kinit$cap_int)
+    dat$kappa_slope <- mean(kinit$cap_slope)
   } else {
     dat$cap <- history$cap_scaled  # Add capacities to the Stan data
     kinit <- ht_logistic_growth_init(history)
   }
-  
+
 
   model <- compile_stan_model_ht(m$growth)
   
   stan_init <- function() {
     if (length(ncol(history$y)) > 0) {
+      if (m$growth == "ht_logistic_cap" | m$growth == "ht_logistic_cap_cov") {
+        return(list(k = kinit$k,
+                    m = kinit$m,
+                    delta = matrix(0, length(m$changepoints.t), ncol(df$y)),
+                    beta = matrix(0, ncol(seasonal.features), ncol(df$y)),
+                    sigma_obs = 1, 
+                    cap_int = kinit$cap_int,
+                    cap_slope = kinit$cap_slope
+        ))
+      } else {
       return(list(k = kinit$k,
                   m = kinit$m,
                   delta = matrix(0, length(m$changepoints.t), ncol(df$y)),
                   beta = matrix(0, ncol(seasonal.features), ncol(df$y)),
                   sigma_obs = 1
       ))
+    }
     } else {
       return(list(k = kinit[1],
                   m = kinit[2],
@@ -1196,7 +1248,6 @@ predict_ht.prophet <- function(object, df = NULL, ...) {
   
   # df <- df %>%
   #   dplyr::bind_cols(predict_uncertainty(object, df)) %>%
-  #   dplyr::bind_cols(predict_ht_seasonal_components(object, df))
   
   df$seasonal_components <- predict_seasonal_components_ht(object, df)
   
@@ -1265,6 +1316,8 @@ piecewise_logistic <- function(t, cap, deltas, k, m, changepoint.ts) {
   return(y)
 }
 
+
+
 #' Predict trend using the prophet model.
 #'
 #' @param model Prophet object.
@@ -1299,13 +1352,24 @@ predict_trend_ht <- function(model, df) {
   t <- df$t
   deltas <- model$params$delta
   
-  if (model$growth == 'ht_linear' | model$growth == "ht_linear_cov") {
+  if (model$growth == 'ht_linear' | model$growth == 'ht_linear_cov') {
     k <- model$params$k
     param.m <- model$params$m
     trend <- NULL
     for (i in 1:ncol(df$y_scaled)) {
       trend <- cbind(trend, piecewise_linear(
         t, deltas[, i], k[i], param.m[i], model$changepoints.t))
+    }
+  } else if(model$growth == 'ht_logistic_cap' | model$growth == "ht_logistic_cap_cov") {
+    k <- model$params$k
+    param.m <- model$params$m
+    trend <- NULL
+    cap <- apply(rbind(model$params$cap_int, model$params$cap_slope), 2, function(x) {
+      x[1] + x[2] * t
+    })
+    for (i in 1:ncol(df$y_scaled)) {
+      trend <- cbind(trend, piecewise_logistic(
+        t, cap[, i], deltas[, i], k[i], param.m[i], model$changepoints.t))
     }
   } else {
     k <- model$params$k
