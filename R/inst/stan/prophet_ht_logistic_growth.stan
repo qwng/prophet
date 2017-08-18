@@ -24,7 +24,6 @@ parameters {
 transformed parameters {
   matrix[S, N] gamma;                  // adjusted offsets, for piecewise continuity
   row_vector[N] k_s[S + 1];            // actual rate in each segment
-  #matrix[S + 1, N] k_s;                 // actual rate in each segment
   vector[N] ones;                    // vector consist of 1, for adding delta together
   vector[N] m_pr;
 
