@@ -9,6 +9,10 @@ validate_inputs(m)
 \arguments{
 \item{m}{Prophet object.}
 }
+\value{
+The Prophet object.
+}
 \description{
 Validates the inputs to Prophet.
 }
+\keyword{internal}

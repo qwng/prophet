@@ -2,18 +2,29 @@
 % Please edit documentation in R/prophet.R
 \name{make_all_seasonality_features}
 \alias{make_all_seasonality_features}
-\title{Dataframe with seasonality features.}
+\title{Dataframe with seasonality features.
+Includes seasonality features, holiday features, and added regressors.}
 \usage{
 make_all_seasonality_features(m, df)
 }
 \arguments{
 \item{m}{Prophet object.}
 
-\item{df}{Dataframe with dates for computing seasonality features.}
+\item{df}{Dataframe with dates for computing seasonality features and any
+added regressors.}
 }
 \value{
-Dataframe with seasonality.
+List with items
+ seasonal.features: Dataframe with regressor features,
+ prior.scales: Array of prior scales for each colum of the features
+   dataframe.
+ component.cols: Dataframe with indicators for which regression components
+   correspond to which columns.
+ modes: List with keys 'additive' and 'multiplicative' with arrays of
+   component names for each mode of seasonality.
 }
 \description{
 Dataframe with seasonality features.
+Includes seasonality features, holiday features, and added regressors.
 }
+\keyword{internal}

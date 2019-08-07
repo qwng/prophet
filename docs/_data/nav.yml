@@ -1,7 +1,7 @@
 - title: Docs
-  href: /docs/
+  href: docs/
   category: docs
 
 - title: GitHub
-  href: https://github.com/facebookincubator/prophet
+  href: https://github.com/facebook/prophet
   category: external

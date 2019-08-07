@@ -2,12 +2,14 @@
   items:
   - id: installation
   - id: quick_start
-  - id: forecasting_growth
+  - id: saturating_forecasts
   - id: trend_changepoints
-  - id: holiday_effects
+  - id: seasonality,_holiday_effects,_and_regressors
+  - id: multiplicative_seasonality
   - id: uncertainty_intervals
   - id: outliers
   - id: non-daily_data
+  - id: diagnostics
   - id: contributing
 
 # n title:, 1 items: per title:, n id: per items:

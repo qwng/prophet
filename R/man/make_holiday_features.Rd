@@ -4,16 +4,23 @@
 \alias{make_holiday_features}
 \title{Construct a matrix of holiday features.}
 \usage{
-make_holiday_features(m, dates)
+make_holiday_features(m, dates, holidays)
 }
 \arguments{
 \item{m}{Prophet object.}
 
 \item{dates}{Vector with dates used for computing seasonality.}
+
+\item{holidays}{Dataframe containing holidays, as returned by
+construct_holiday_dataframe.}
 }
 \value{
-A dataframe with a column for each holiday.
+A list with entries
+ holiday.features: dataframe with a column for each holiday.
+ prior.scales: array of prior scales for each holiday column.
+ holiday.names: array of names of all holidays.
 }
 \description{
 Construct a matrix of holiday features.
 }
+\keyword{internal}
